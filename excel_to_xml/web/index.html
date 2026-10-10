@@ -1,0 +1,365 @@
+<title>Excel to XML</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* Layout: one narrow column, a drop zone, then the converted XML. */
+:root {
+  color-scheme: light;
+  --bg: #f5f4f0;
+  --surface: #ffffff;
+  --fg: #1c1e1b;
+  --muted: #666b63;
+  --line: #d9d7cf;
+  --accent: #1d6f52;
+  --accent-fg: #ffffff;
+  --code-bg: #faf9f6;
+  --error: #a33a2b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161a;
+    --surface: #1c1f24;
+    --fg: #ebeae5;
+    --muted: #9ca199;
+    --line: #2e333a;
+    --accent: #5fc39a;
+    --accent-fg: #0d1f17;
+    --code-bg: #121418;
+    --error: #f08a7a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a;
+  --surface: #1c1f24;
+  --fg: #ebeae5;
+  --muted: #9ca199;
+  --line: #2e333a;
+  --accent: #5fc39a;
+  --accent-fg: #0d1f17;
+  --code-bg: #121418;
+  --error: #f08a7a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding-block: 32px;
+  padding-inline: 16px;
+}
+header h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+header p { margin: 4px 0 0; color: var(--muted); }
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 24px;
+  padding: 36px 16px;
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+}
+.drop:hover,
+.drop.over { border-color: var(--accent); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop strong { font-weight: 600; }
+.drop span { color: var(--muted); font-size: 14px; }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.panel {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 520px) {
+  .options { grid-template-columns: minmax(0, 1fr); }
+}
+label.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; color: var(--muted); }
+select, input[type="text"] {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+select:focus-visible, input[type="text"]:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 20px 0 10px;
+}
+.meta .name { font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
+.meta .count { color: var(--muted); font-size: 14px; }
+button {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: 500 14px/1 "IBM Plex Sans", system-ui, sans-serif;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.05); }
+button.secondary { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+pre {
+  max-height: 460px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--code-bg);
+  font: 13px/1.5 "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre;
+  tab-size: 2;
+}
+.status { min-height: 1.5em; margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+.status.error { color: var(--error); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .drop { transition: border-color 0.15s ease; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Excel to XML</h1>
+    <p>Turn a worksheet into XML. Your file is read in this browser and is never uploaded.</p>
+  </header>
+
+  <label class="drop" id="drop" for="file">
+    <strong>Choose an .xlsx file</strong>
+    <span>or drop it here</span>
+    <input class="visually-hidden" type="file" id="file" accept=".xlsx">
+  </label>
+
+  <section class="panel" id="panel" hidden>
+    <div class="options">
+      <label class="field">Sheet
+        <select id="sheet"></select>
+      </label>
+      <label class="field">Root element
+        <input type="text" id="root" value="rows" spellcheck="false">
+      </label>
+      <label class="field">Row element
+        <input type="text" id="row" value="row" spellcheck="false">
+      </label>
+    </div>
+
+    <div class="meta">
+      <span class="name" id="fileName"></span>
+      <span class="count" id="count"></span>
+      <div class="actions">
+        <button type="button" class="secondary" id="copy">Copy XML</button>
+        <button type="button" id="download">Download .xml</button>
+      </div>
+    </div>
+
+    <pre id="output" tabindex="0"></pre>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const NAME_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+let workbook = null;
+
+// Mirrors excel_to_xml.py so the browser and CLI produce the same XML.
+function tagFor(header) {
+  if (header == null || !String(header).trim()) return null;
+  let tag = String(header).trim().replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "column";
+  if (!/^[A-Za-z_]/.test(tag)) tag = "_" + tag;
+  if (/^xml/i.test(tag)) tag = "_" + tag;
+  return tag;
+}
+
+function escapeXml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function pad(n) { return String(n).padStart(2, "0"); }
+
+function textOf(value) {
+  if (value == null) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value instanceof Date) {
+    // Local time, no timezone suffix, like Python's datetime.isoformat().
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}` +
+      `T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+  }
+  return String(value);
+}
+
+function buildXml(rows, rootTag, rowTag) {
+  const [header = [], ...body] = rows;
+  const columns = [];
+  const seen = new Set();
+  header.forEach((h, index) => {
+    const tag = tagFor(h);
+    if (!tag) return;
+    let unique = tag;
+    for (let n = 2; seen.has(unique); n++) unique = `${tag}_${n}`;
+    seen.add(unique);
+    columns.push({ index, tag: unique });
+  });
+
+  const lines = ['<?xml version="1.0" encoding="UTF-8"?>', `<${rootTag}>`];
+  let count = 0;
+  for (const values of body) {
+    if (values.every(v => v == null || String(v).trim() === "")) continue;
+    count++;
+    lines.push(`  <${rowTag}>`);
+    for (const { index, tag } of columns) {
+      const text = textOf(values[index]);
+      lines.push(text ? `    <${tag}>${escapeXml(text)}</${tag}>` : `    <${tag} />`);
+    }
+    lines.push(`  </${rowTag}>`);
+  }
+  if (count === 0) lines[1] = `<${rootTag} />`;
+  else lines.push(`</${rootTag}>`);
+  return { xml: lines.join("\n"), count, columns: columns.length };
+}
+
+function setStatus(message, isError = false) {
+  const el = $("status");
+  el.textContent = message;
+  el.classList.toggle("error", isError);
+}
+
+function convert() {
+  if (!workbook) return;
+  const rootTag = $("root").value.trim() || "rows";
+  const rowTag = $("row").value.trim() || "row";
+  if (!NAME_RE.test(rootTag) || !NAME_RE.test(rowTag)) {
+    $("output").textContent = "";
+    $("count").textContent = "";
+    setStatus("Element names can use letters, digits, _, . and - and must start with a letter or _.", true);
+    return;
+  }
+  try {
+    const ws = workbook.Sheets[$("sheet").value];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
+    const { xml, count, columns } = buildXml(rows, rootTag, rowTag);
+    $("output").textContent = xml;
+    $("count").textContent = `${count} rows, ${columns} columns`;
+    setStatus(count ? "" : "This sheet has no data rows below the header.");
+  } catch (err) {
+    setStatus(`Could not convert this sheet. ${err.message}`, true);
+  }
+}
+
+function loadFile(file) {
+  if (!file) return;
+  if (!/\.xlsx$/i.test(file.name)) {
+    setStatus("Please choose an .xlsx file.", true);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      workbook = XLSX.read(reader.result, { type: "array", cellDates: true });
+      if (!workbook.SheetNames.length) throw new Error("The file has no sheets.");
+      $("sheet").replaceChildren(...workbook.SheetNames.map(name => new Option(name, name)));
+      $("fileName").textContent = file.name;
+      $("panel").hidden = false;
+      convert();
+    } catch (err) {
+      workbook = null;
+      $("panel").hidden = true;
+      setStatus(`Could not read this file. ${err.message}`, true);
+    }
+  };
+  reader.onerror = () => setStatus("Could not read this file.", true);
+  reader.readAsArrayBuffer(file);
+}
+
+$("file").addEventListener("change", e => loadFile(e.target.files[0]));
+
+const drop = $("drop");
+["dragenter", "dragover"].forEach(type =>
+  drop.addEventListener(type, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(type =>
+  drop.addEventListener(type, () => drop.classList.remove("over")));
+drop.addEventListener("drop", e => {
+  e.preventDefault();
+  loadFile(e.dataTransfer.files[0]);
+});
+
+["sheet", "root", "row"].forEach(id => $(id).addEventListener("input", convert));
+
+$("download").addEventListener("click", () => {
+  const text = $("output").textContent;
+  if (!text) return;
+  const name = ($("fileName").textContent || "converted").replace(/\.xlsx$/i, "") + ".xml";
+  const url = URL.createObjectURL(new Blob([text], { type: "application/xml" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus(`Downloaded ${name}.`);
+});
+
+$("copy").addEventListener("click", async () => {
+  const text = $("output").textContent;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Copied to clipboard.");
+  } catch (err) {
+    // Some viewers block clipboard access: select the text so Ctrl+C / Cmd+C works.
+    const range = document.createRange();
+    range.selectNodeContents($("output"));
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    setStatus("Clipboard is blocked here. The XML is selected, so press Ctrl+C or Cmd+C.");
+  }
+});
+</script>
